@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.27)
 
-project(libmonome VERSION 1.4.8)
+project(libmonome VERSION 1.4.10)
 
 set(CMAKE_C_STANDARD 17)
 
