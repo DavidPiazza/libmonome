@@ -1,11 +1,21 @@
 cmake_minimum_required(VERSION 3.27)
 
-project(libmonome VERSION 1.4.10)
+project(libmonome VERSION 1.4.10 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 17)
 
 option(BUILD_EXAMPLES "build libmonome c examples")
 option(BUILD_PYTHON_EXTENSION "build cython-based python extension")
+option(BUILD_CPP_WRAPPER "build libmonome C++17 wrapper" ON)
+option(BUILD_CPP_EXAMPLES "build libmonome C++ examples" OFF)
+
+if(BUILD_CPP_EXAMPLES AND NOT BUILD_CPP_WRAPPER)
+    message(FATAL_ERROR "BUILD_CPP_EXAMPLES requires BUILD_CPP_WRAPPER")
+endif()
+
+if(BUILD_CPP_WRAPPER)
+    enable_language(CXX)
+endif()
 
 include(GNUInstallDirs)
 
@@ -67,16 +77,39 @@ target_include_directories(monome PUBLIC
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_link_libraries(monome PRIVATE ${libmonome_libs})
 
+if(BUILD_CPP_WRAPPER)
+    add_library(monomepp src/cpp/Monome.cpp)
+    target_compile_features(monomepp PUBLIC cxx_std_17)
+    target_include_directories(monomepp PUBLIC
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+    target_link_libraries(monomepp PUBLIC monome)
+endif()
+
 if(BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if(BUILD_CPP_EXAMPLES)
+    add_executable(simple_toggle examples/cpp/simple_toggle.cpp)
+    target_link_libraries(simple_toggle PRIVATE monomepp)
 endif()
 
 if(BUILD_PYTHON_EXTENSION)
     add_subdirectory(bindings/python)
 endif()
 
-install(TARGETS monome_static monome EXPORT libmonomeConfig
+set(libmonome_install_targets monome_static monome)
+if(BUILD_CPP_WRAPPER)
+    list(APPEND libmonome_install_targets monomepp)
+endif()
+
+install(TARGETS ${libmonome_install_targets} EXPORT libmonomeConfig
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(EXPORT libmonomeConfig DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libmonome NAMESPACE libmonome::)
 install(DIRECTORY public/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+if(BUILD_CPP_WRAPPER)
+    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()

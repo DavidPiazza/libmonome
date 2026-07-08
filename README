@@ -21,5 +21,32 @@ libmonome:
         $ cmake ..
         $ make; sudo make install
 
+    The optional C++17 wrapper is built by default as the monomepp target. It
+    keeps the C API intact and adds RAII ownership, enum classes, std::string
+    accessors, and std::function event callbacks:
+
+        #include <monomepp/Monome.hpp>
+
+        int main() {
+            monomepp::Monome m("osc.udp://127.0.0.1:8080/monome", "8000");
+
+            m.ledAll(false);
+            m.on(monomepp::EventType::ButtonDown,
+                 [&](const monomepp::Event& e) {
+                     m.ledSet(e.gridX(), e.gridY(), true);
+                 });
+
+            m.eventLoop();
+        }
+
+    Disable the wrapper with:
+
+        $ cmake -DBUILD_CPP_WRAPPER=OFF ..
+
+    Build the C++ example with:
+
+        $ cmake -DBUILD_CPP_EXAMPLES=ON ..
+        $ make simple_toggle
+
     libmonome was written by william light (visinin on the monome forums).
     You can contact him at <wrl@illest.net>.
