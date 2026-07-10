@@ -185,6 +185,9 @@ public:
 
 	/*
 	 * Callbacks live inside this object and are unregistered before close.
+	 * Callback registration and dispatch share an unsynchronized callback table:
+	 * callers must not invoke on() concurrently with eventHandleNext(),
+	 * eventLoop(), or native callback dispatch.
 	 * The C API has a blocking event loop with no cancellation hook, so callers
 	 * must not destroy or move a Monome while another thread is inside
 	 * eventLoop() or monome_event_loop(raw()).
