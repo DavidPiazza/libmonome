@@ -80,7 +80,7 @@ target_include_directories(monome PUBLIC
 target_link_libraries(monome PRIVATE ${libmonome_libs})
 
 if(BUILD_CPP_WRAPPER)
-    add_library(monomepp src/cpp/Monome.cpp)
+    add_library(monomepp STATIC src/cpp/Monome.cpp)
     target_compile_features(monomepp PUBLIC cxx_std_17)
     target_include_directories(monomepp PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
