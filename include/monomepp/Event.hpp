@@ -43,7 +43,14 @@ public:
 	int tiltY() const noexcept;
 	int tiltZ() const noexcept;
 
+	/*
+	 * Borrowed handle copied from the C event. The owning Monome remains
+	 * responsible for it; it is invalidated when that Monome is destroyed or
+	 * move-assigned. Event does not extend the handle's lifetime.
+	 */
 	monome_t* monome() const noexcept;
+
+	/* Borrowed reference valid until this Event is modified or destroyed. */
 	const monome_event_t& raw() const noexcept;
 
 private:

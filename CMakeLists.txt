@@ -107,7 +107,9 @@ if(BUILD_TESTING)
         src/proto/series.c
         src/platform/embed.c
         tests/fake_platform.c)
-    target_compile_definitions(monome_fake PRIVATE EMBED_PROTOS)
+    target_compile_definitions(monome_fake PRIVATE
+        EMBED_PROTOS
+        MONOME_TEST_FAKE_PLATFORM)
     target_include_directories(monome_fake
         PRIVATE
             src/private
@@ -119,6 +121,16 @@ if(BUILD_TESTING)
     target_include_directories(monome_acquisition_tests PRIVATE tests)
     target_link_libraries(monome_acquisition_tests PRIVATE monome_fake)
     add_test(NAME monome_acquisition_tests COMMAND monome_acquisition_tests)
+
+    if(BUILD_CPP_WRAPPER)
+        add_executable(monome_wrapper_tests
+            tests/monome_wrapper_tests.cpp
+            src/cpp/Monome.cpp)
+        target_compile_features(monome_wrapper_tests PRIVATE cxx_std_17)
+        target_include_directories(monome_wrapper_tests PRIVATE include tests)
+        target_link_libraries(monome_wrapper_tests PRIVATE monome_fake)
+        add_test(NAME monome_wrapper_tests COMMAND monome_wrapper_tests)
+    endif()
 endif()
 
 if(BUILD_PYTHON_EXTENSION)

@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 
 #include <monome.h>
@@ -44,6 +45,11 @@ public:
 	Monome(Monome&& other) noexcept;
 	Monome& operator=(Monome&& other) noexcept;
 
+	/*
+	 * Borrowed C handle. Monome retains ownership. It is invalidated by this
+	 * object's destruction, move assignment, or a move that makes this object
+	 * moved-from. Callers must never pass it to monome_close().
+	 */
 	monome_t* raw() const noexcept;
 
 	std::string serial() const;
@@ -107,17 +113,18 @@ public:
 
 private:
 	static constexpr std::size_t EventCount = MONOME_EVENT_MAX;
+	struct CallbackState;
 
 	monome_t* handle() const;
 	void close();
 	void unregisterCallbacks() noexcept;
-	void rebindCallbacks() noexcept;
-	void dispatch(const monome_event_t& event);
 
 	static void handleEvent(const monome_event_t* event, void* data) noexcept;
 
+	// The C API stores this address as callback user data. Heap ownership keeps
+	// it stable when Monome itself moves.
+	std::unique_ptr<CallbackState> callbackState_;
 	monome_t* monome_ = nullptr;
-	std::array<Callback, EventCount> callbacks_{};
 };
 
 } // namespace monomepp

@@ -21,6 +21,7 @@ typedef struct {
     size_t input_offset;
     int queued_initial;
     int queued_retry;
+    int fail_next_registration;
 } fake_state_t;
 
 static fake_state_t state;
@@ -59,6 +60,34 @@ unsigned int fake_monome_query_write_count(unsigned int command) {
 size_t fake_monome_outstanding_allocations(void) { return state.allocations; }
 uint64_t fake_monome_elapsed_milliseconds(void) { return state.now_ms; }
 
+void fake_monome_fail_next_registration(void) {
+    state.fail_next_registration = 1;
+}
+
+int monome_test_registration_status(monome_event_type_t type, int registering) {
+    (void) type;
+    (void) registering;
+    if( state.fail_next_registration ) {
+        state.fail_next_registration = 0;
+        return 1;
+    }
+    return 0;
+}
+
+void fake_monome_dispatch(monome_t *monome, monome_event_type_t type,
+                          unsigned int number, int delta) {
+    monome_event_t event;
+    monome_callback_t *handler;
+    memset(&event, 0, sizeof(event));
+    event.event_type = type;
+    event.monome = monome;
+    event.encoder.number = number;
+    event.encoder.delta = delta;
+    handler = &monome->handlers[type];
+    if( handler->cb )
+        handler->cb(&event, handler->data);
+}
+
 char *monome_platform_get_dev_serial(const char *device) {
     (void) device;
     return m_strdup("m07407811");
@@ -69,6 +98,12 @@ int monome_platform_open(monome_t *monome, const monome_devmap_t *mapping,
     (void) mapping;
     (void) device;
     ++state.opens;
+    if( state.opens > 1 ) {
+        state.input_size = 0;
+        state.input_offset = 0;
+        state.queued_initial = 0;
+        state.queued_retry = 0;
+    }
     if( state.mode == FAKE_MONOME_OPEN_FAILURE )
         return 1;
     monome->fd = 42;

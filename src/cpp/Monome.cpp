@@ -48,12 +48,17 @@ std::size_t eventIndex(EventType type) {
 
 } // namespace
 
+struct Monome::CallbackState {
+	std::array<Callback, EventCount> callbacks{};
+};
+
 Monome::Monome(const std::string& device)
 	: Monome(device, DefaultListenPort) {
 }
 
 Monome::Monome(const std::string& device, const std::string& listenPort)
-	: monome_(monome_open(device.c_str(),
+	: callbackState_(std::make_unique<CallbackState>()),
+	  monome_(monome_open(device.c_str(),
 	                      const_cast<char*>(listenPort.c_str()))) {
 	if( !monome_ )
 		throw std::runtime_error("failed to open monome device: " + device);
@@ -64,10 +69,8 @@ Monome::~Monome() {
 }
 
 Monome::Monome(Monome&& other) noexcept
-	: monome_(other.monome_),
-	  callbacks_(std::move(other.callbacks_)) {
-	other.monome_ = nullptr;
-	rebindCallbacks();
+	: callbackState_(std::move(other.callbackState_)),
+	  monome_(std::exchange(other.monome_, nullptr)) {
 }
 
 Monome& Monome::operator=(Monome&& other) noexcept {
@@ -76,10 +79,8 @@ Monome& Monome::operator=(Monome&& other) noexcept {
 
 	close();
 
-	monome_ = other.monome_;
-	callbacks_ = std::move(other.callbacks_);
-	other.monome_ = nullptr;
-	rebindCallbacks();
+	callbackState_ = std::move(other.callbackState_);
+	monome_ = std::exchange(other.monome_, nullptr);
 
 	return *this;
 }
@@ -239,11 +240,12 @@ int Monome::eventHandleNext() {
 		return status;
 
 	std::size_t index = 0;
-	if( !eventIndex(event.event_type, index) || !callbacks_[index] )
+	if( !callbackState_ || !eventIndex(event.event_type, index) ||
+	    !callbackState_->callbacks[index] )
 		return 0;
 
 	Event wrapped(event);
-	callbacks_[index](wrapped);
+	callbackState_->callbacks[index](wrapped);
 	return 1;
 }
 
@@ -254,15 +256,18 @@ void Monome::eventLoop() {
 void Monome::on(EventType type, Callback callback) {
 	auto* monome = handle();
 	const auto index = eventIndex(type);
-	callbacks_[index] = std::move(callback);
-
 	const auto cType = toC(type);
-	const int status = callbacks_[index]
-		? monome_register_handler(monome, cType, &Monome::handleEvent, this)
+	const int status = callback
+		? monome_register_handler(monome, cType, &Monome::handleEvent,
+		                          callbackState_.get())
 		: monome_unregister_handler(monome, cType);
 
 	if( status )
 		throw std::runtime_error("failed to update monome event handler");
+
+	// Commit only after the C registration operation succeeds. std::function's
+	// move assignment is noexcept, so C and C++ callback state cannot diverge.
+	callbackState_->callbacks[index] = std::move(callback);
 }
 
 monome_t* Monome::handle() const {
@@ -282,34 +287,22 @@ void Monome::close() {
 }
 
 void Monome::unregisterCallbacks() noexcept {
-	for( std::size_t i = 0; i < callbacks_.size(); ++i )
+	for( std::size_t i = 0; i < EventCount; ++i )
 		monome_unregister_handler(monome_, static_cast<monome_event_type_t>(i));
-}
-
-void Monome::rebindCallbacks() noexcept {
-	if( !monome_ )
-		return;
-
-	for( std::size_t i = 0; i < callbacks_.size(); ++i ) {
-		if( callbacks_[i] )
-			monome_register_handler(monome_, static_cast<monome_event_type_t>(i),
-			                        &Monome::handleEvent, this);
-	}
-}
-
-void Monome::dispatch(const monome_event_t& event) {
-	std::size_t index = 0;
-	if( !eventIndex(event.event_type, index) || !callbacks_[index] )
-		return;
-
-	Event wrapped(event);
-	callbacks_[index](wrapped);
 }
 
 void Monome::handleEvent(const monome_event_t* event, void* data) noexcept {
 	try {
-		if( event && data )
-			static_cast<Monome*>(data)->dispatch(*event);
+		if( !event || !data )
+			return;
+
+		auto& state = *static_cast<CallbackState*>(data);
+		std::size_t index = 0;
+		if( !eventIndex(event->event_type, index) || !state.callbacks[index] )
+			return;
+
+		Event wrapped(*event);
+		state.callbacks[index](wrapped);
 	} catch( ... ) {
 		std::terminate();
 	}

@@ -181,6 +181,15 @@ int monome_register_handler(monome_t *monome, monome_event_type_t event_type,
 	if( event_type >= MONOME_EVENT_MAX )
 		return EINVAL;
 
+#ifdef MONOME_TEST_FAKE_PLATFORM
+	{
+		extern int monome_test_registration_status(monome_event_type_t, int);
+		const int status = monome_test_registration_status(event_type, cb != NULL);
+		if( status )
+			return status;
+	}
+#endif
+
 	handler       = &monome->handlers[event_type];
 	handler->cb   = cb;
 	handler->data = data;

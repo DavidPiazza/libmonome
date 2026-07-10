@@ -4,6 +4,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <monome.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     FAKE_MONOME_SUCCESS,
     FAKE_MONOME_PARTIAL_THEN_RETRY,
@@ -19,5 +25,12 @@ unsigned int fake_monome_close_count(void);
 unsigned int fake_monome_query_write_count(unsigned int command);
 size_t fake_monome_outstanding_allocations(void);
 uint64_t fake_monome_elapsed_milliseconds(void);
+void fake_monome_fail_next_registration(void);
+void fake_monome_dispatch(monome_t *monome, monome_event_type_t type,
+                          unsigned int number, int delta);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
