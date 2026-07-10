@@ -2,6 +2,7 @@
 
 #include "platform.h"
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,6 +23,8 @@ typedef struct {
     int queued_initial;
     int queued_retry;
     int fail_next_registration;
+	int fail_next_read_status;
+	int fail_next_write_status;
 } fake_state_t;
 
 static fake_state_t state;
@@ -64,12 +67,26 @@ void fake_monome_fail_next_registration(void) {
     state.fail_next_registration = 1;
 }
 
+void fake_monome_fail_next_read(int native_status) {
+	state.fail_next_read_status = native_status < 0 ? native_status : -1;
+}
+
+void fake_monome_fail_next_write(int native_status) {
+	state.fail_next_write_status = native_status < 0 ? native_status : -1;
+}
+
+void fake_monome_queue_encoder_delta(unsigned int number, int delta) {
+	append_byte(0x50);
+	append_byte((uint8_t) number);
+	append_byte((uint8_t) delta);
+}
+
 int monome_test_registration_status(monome_event_type_t type, int registering) {
     (void) type;
     (void) registering;
     if( state.fail_next_registration ) {
         state.fail_next_registration = 0;
-        return 1;
+		return EBUSY;
     }
     return 0;
 }
@@ -104,8 +121,10 @@ int monome_platform_open(monome_t *monome, const monome_devmap_t *mapping,
         state.queued_initial = 0;
         state.queued_retry = 0;
     }
-    if( state.mode == FAKE_MONOME_OPEN_FAILURE )
+	if( state.mode == FAKE_MONOME_OPEN_FAILURE ) {
+		errno = ENODEV;
         return 1;
+	}
     monome->fd = 42;
     return 0;
 }
@@ -122,8 +141,15 @@ ssize_t monome_platform_write(monome_t *monome, const uint8_t *buffer,
                               size_t byte_count) {
     unsigned int command;
     (void) monome;
-    if( state.mode == FAKE_MONOME_WRITE_FAILURE )
+	if( state.fail_next_write_status != 0 ) {
+		const int status = state.fail_next_write_status;
+		state.fail_next_write_status = 0;
+		return status;
+	}
+	if( state.mode == FAKE_MONOME_WRITE_FAILURE ) {
+		errno = EIO;
         return -1;
+	}
     if( byte_count == 0 )
         return 0;
     command = buffer[0] & 0x0f;
@@ -136,8 +162,15 @@ ssize_t monome_platform_read(monome_t *monome, uint8_t *buffer,
     size_t available;
     size_t copied;
     (void) monome;
-    if( state.mode == FAKE_MONOME_READ_FAILURE )
+	if( state.fail_next_read_status != 0 ) {
+		const int status = state.fail_next_read_status;
+		state.fail_next_read_status = 0;
+		return status;
+	}
+	if( state.mode == FAKE_MONOME_READ_FAILURE ) {
+		errno = EIO;
         return -1;
+	}
     available = state.input_size - state.input_offset;
     if( available == 0 )
         return 0;

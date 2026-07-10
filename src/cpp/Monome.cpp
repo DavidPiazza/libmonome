@@ -16,8 +16,9 @@
 
 #include <monomepp/Monome.hpp>
 
-#include <exception>
-#include <stdexcept>
+#include <atomic>
+#include <cerrno>
+#include <sstream>
 #include <utility>
 
 namespace monomepp {
@@ -38,18 +39,92 @@ bool eventIndex(monome_event_type_t type, std::size_t& index) noexcept {
 	return true;
 }
 
-std::size_t eventIndex(EventType type) {
+std::size_t eventIndex(EventType type, Operation operation) {
 	std::size_t index = 0;
 	if( !eventIndex(toC(type), index) )
-		throw std::invalid_argument("unsupported monome event type");
+		throw Error(operation, EINVAL, "unsupported monome event type");
 
 	return index;
 }
 
+std::string makeErrorMessage(Operation operation, int nativeStatus,
+							 const std::string& details) {
+	std::ostringstream message;
+	message << operationName(operation) << " failed (monome status "
+	        << nativeStatus << ')';
+	if( !details.empty() )
+		message << ": " << details;
+	return message.str();
+}
+
+IoResult makeIoResult(Operation operation, int nativeStatus) noexcept {
+	return {
+		nativeStatus < 0 ? IoStatus::DeviceError : IoStatus::Success,
+		operation,
+		nativeStatus
+	};
+}
+
+IoResult closedIoResult(Operation operation) noexcept {
+	return {IoStatus::DeviceError, operation, EBADF};
+}
+
 } // namespace
+
+const char* operationName(Operation operation) noexcept {
+	switch( operation ) {
+	case Operation::None: return "none";
+	case Operation::Open: return "open monome device";
+	case Operation::ReadSerial: return "read monome serial";
+	case Operation::ReadDevicePath: return "read monome device path";
+	case Operation::ReadFriendlyName: return "read monome friendly name";
+	case Operation::ReadProtocol: return "read monome protocol";
+	case Operation::ReadRows: return "read monome rows";
+	case Operation::ReadColumns: return "read monome columns";
+	case Operation::SetRotation: return "set monome rotation";
+	case Operation::ReadRotation: return "read monome rotation";
+	case Operation::LedSet: return "set monome LED";
+	case Operation::LedAll: return "set all monome LEDs";
+	case Operation::LedMap: return "write monome LED map";
+	case Operation::LedColumn: return "write monome LED column";
+	case Operation::LedRow: return "write monome LED row";
+	case Operation::LedIntensity: return "set monome LED intensity";
+	case Operation::LedLevelSet: return "set monome LED level";
+	case Operation::LedLevelAll: return "set all monome LED levels";
+	case Operation::LedLevelMap: return "write monome LED level map";
+	case Operation::LedLevelRow: return "write monome LED level row";
+	case Operation::LedLevelColumn: return "write monome LED level column";
+	case Operation::LedRingSet: return "set monome ring LED";
+	case Operation::LedRingAll: return "set all monome ring LEDs";
+	case Operation::LedRingMap: return "write monome ring LED map";
+	case Operation::LedRingRange: return "write monome ring LED range";
+	case Operation::LedRingIntensity: return "set monome ring intensity";
+	case Operation::TiltEnable: return "enable monome tilt";
+	case Operation::TiltDisable: return "disable monome tilt";
+	case Operation::PollEvent: return "poll monome event";
+	case Operation::EventLoop: return "run monome event loop";
+	case Operation::ConfigureCallback: return "configure monome callback";
+	}
+	return "unknown monome operation";
+}
+
+Error::Error(Operation operation, int nativeStatus, std::string details)
+	: std::runtime_error(makeErrorMessage(operation, nativeStatus, details)),
+	  operation_(operation),
+	  nativeStatus_(nativeStatus) {
+}
+
+Operation Error::operation() const noexcept {
+	return operation_;
+}
+
+int Error::nativeStatus() const noexcept {
+	return nativeStatus_;
+}
 
 struct Monome::CallbackState {
 	std::array<Callback, EventCount> callbacks{};
+	std::atomic<std::uint64_t> failureCount{0};
 };
 
 Monome::Monome(const std::string& device)
@@ -57,14 +132,17 @@ Monome::Monome(const std::string& device)
 }
 
 Monome::Monome(const std::string& device, const std::string& listenPort)
-	: callbackState_(std::make_unique<CallbackState>()),
-	  monome_(monome_open(device.c_str(),
-	                      const_cast<char*>(listenPort.c_str()))) {
-	if( !monome_ )
-		throw std::runtime_error("failed to open monome device: " + device);
+	: callbackState_(std::make_unique<CallbackState>()) {
+	errno = 0;
+	monome_ = monome_open(device.c_str(),
+	                      const_cast<char*>(listenPort.c_str()));
+	if( !monome_ ) {
+		const int nativeStatus = errno != 0 ? errno : -1;
+		throw Error(Operation::Open, nativeStatus, device);
+	}
 }
 
-Monome::~Monome() {
+Monome::~Monome() noexcept {
 	close();
 }
 
@@ -90,172 +168,253 @@ monome_t* Monome::raw() const noexcept {
 }
 
 std::string Monome::serial() const {
-	return stringFromNullable(monome_get_serial(handle()));
+	return stringFromNullable(monome_get_serial(handle(Operation::ReadSerial)));
 }
 
 std::string Monome::devpath() const {
-	return stringFromNullable(monome_get_devpath(handle()));
+	return stringFromNullable(monome_get_devpath(handle(Operation::ReadDevicePath)));
 }
 
 std::string Monome::friendlyName() const {
-	return stringFromNullable(monome_get_friendly_name(handle()));
+	return stringFromNullable(
+		monome_get_friendly_name(handle(Operation::ReadFriendlyName)));
 }
 
 std::string Monome::proto() const {
-	return stringFromNullable(monome_get_proto(handle()));
+	return stringFromNullable(monome_get_proto(handle(Operation::ReadProtocol)));
 }
 
 int Monome::rows() const {
-	return monome_get_rows(handle());
+	return monome_get_rows(handle(Operation::ReadRows));
 }
 
 int Monome::cols() const {
-	return monome_get_cols(handle());
+	return monome_get_cols(handle(Operation::ReadColumns));
 }
 
 void Monome::setRotation(Rotation rotation) {
-	monome_set_rotation(handle(), toC(rotation));
+	monome_set_rotation(handle(Operation::SetRotation), toC(rotation));
 }
 
 Rotation Monome::rotation() const {
-	return rotationFromC(monome_get_rotation(handle()));
+	return rotationFromC(monome_get_rotation(handle(Operation::ReadRotation)));
 }
 
-int Monome::ledSet(unsigned int x, unsigned int y, bool on) {
-	return monome_led_set(handle(), x, y, on ? 1 : 0);
+IoResult Monome::ledSet(unsigned int x, unsigned int y, bool on) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedSet);
+	return makeIoResult(Operation::LedSet,
+	                    monome_led_set(monome_, x, y, on ? 1 : 0));
 }
 
-int Monome::ledOn(unsigned int x, unsigned int y) {
-	return monome_led_on(handle(), x, y);
+IoResult Monome::ledOn(unsigned int x, unsigned int y) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedSet);
+	return makeIoResult(Operation::LedSet, monome_led_on(monome_, x, y));
 }
 
-int Monome::ledOff(unsigned int x, unsigned int y) {
-	return monome_led_off(handle(), x, y);
+IoResult Monome::ledOff(unsigned int x, unsigned int y) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedSet);
+	return makeIoResult(Operation::LedSet, monome_led_off(monome_, x, y));
 }
 
-int Monome::ledAll(bool on) {
-	return monome_led_all(handle(), on ? 1 : 0);
+IoResult Monome::ledAll(bool on) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedAll);
+	return makeIoResult(Operation::LedAll, monome_led_all(monome_, on ? 1 : 0));
 }
 
-int Monome::ledMap(unsigned int xOff, unsigned int yOff,
-                   const std::array<std::uint8_t, 8>& data) {
-	return ledMap(xOff, yOff, data.data());
+IoResult Monome::ledMap(unsigned int x, unsigned int y,
+						const std::array<std::uint8_t, 8>& data) noexcept {
+	return ledMap(x, y, data.data());
 }
 
-int Monome::ledMap(unsigned int xOff, unsigned int yOff,
-                   const std::uint8_t* data) {
-	return monome_led_map(handle(), xOff, yOff, data);
+IoResult Monome::ledMap(unsigned int x, unsigned int y,
+						const std::uint8_t* data) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedMap);
+	if( !data )
+		return {IoStatus::DeviceError, Operation::LedMap, EINVAL};
+	return makeIoResult(Operation::LedMap, monome_led_map(monome_, x, y, data));
 }
 
-int Monome::ledCol(unsigned int x, unsigned int yOff, std::size_t count,
-                   const std::uint8_t* colData) {
-	return monome_led_col(handle(), x, yOff, count, colData);
+IoResult Monome::ledCol(unsigned int x, unsigned int y, std::size_t count,
+						const std::uint8_t* data) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedColumn);
+	if( count > 0 && !data )
+		return {IoStatus::DeviceError, Operation::LedColumn, EINVAL};
+	return makeIoResult(Operation::LedColumn,
+	                    monome_led_col(monome_, x, y, count, data));
 }
 
-int Monome::ledRow(unsigned int xOff, unsigned int y, std::size_t count,
-                   const std::uint8_t* rowData) {
-	return monome_led_row(handle(), xOff, y, count, rowData);
+IoResult Monome::ledRow(unsigned int x, unsigned int y, std::size_t count,
+						const std::uint8_t* data) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedRow);
+	if( count > 0 && !data )
+		return {IoStatus::DeviceError, Operation::LedRow, EINVAL};
+	return makeIoResult(Operation::LedRow,
+	                    monome_led_row(monome_, x, y, count, data));
 }
 
-int Monome::ledIntensity(unsigned int brightness) {
-	return monome_led_intensity(handle(), brightness);
+IoResult Monome::ledIntensity(unsigned int brightness) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedIntensity);
+	return makeIoResult(Operation::LedIntensity,
+	                    monome_led_intensity(monome_, brightness));
 }
 
-int Monome::ledLevelSet(unsigned int x, unsigned int y, unsigned int level) {
-	return monome_led_level_set(handle(), x, y, level);
+IoResult Monome::ledLevelSet(unsigned int x, unsigned int y,
+							 unsigned int level) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedLevelSet);
+	return makeIoResult(Operation::LedLevelSet,
+	                    monome_led_level_set(monome_, x, y, level));
 }
 
-int Monome::ledLevelAll(unsigned int level) {
-	return monome_led_level_all(handle(), level);
+IoResult Monome::ledLevelAll(unsigned int level) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedLevelAll);
+	return makeIoResult(Operation::LedLevelAll,
+	                    monome_led_level_all(monome_, level));
 }
 
-int Monome::ledLevelMap(unsigned int xOff, unsigned int yOff,
-                        const std::array<std::uint8_t, 64>& data) {
-	return ledLevelMap(xOff, yOff, data.data());
+IoResult Monome::ledLevelMap(unsigned int x, unsigned int y,
+							 const std::array<std::uint8_t, 64>& data) noexcept {
+	return ledLevelMap(x, y, data.data());
 }
 
-int Monome::ledLevelMap(unsigned int xOff, unsigned int yOff,
-                        const std::uint8_t* data) {
-	return monome_led_level_map(handle(), xOff, yOff, data);
+IoResult Monome::ledLevelMap(unsigned int x, unsigned int y,
+							 const std::uint8_t* data) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedLevelMap);
+	if( !data )
+		return {IoStatus::DeviceError, Operation::LedLevelMap, EINVAL};
+	return makeIoResult(Operation::LedLevelMap,
+	                    monome_led_level_map(monome_, x, y, data));
 }
 
-int Monome::ledLevelRow(unsigned int xOff, unsigned int y, std::size_t count,
-                        const std::uint8_t* data) {
-	return monome_led_level_row(handle(), xOff, y, count, data);
+IoResult Monome::ledLevelRow(unsigned int x, unsigned int y, std::size_t count,
+							 const std::uint8_t* data) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedLevelRow);
+	if( count > 0 && !data )
+		return {IoStatus::DeviceError, Operation::LedLevelRow, EINVAL};
+	return makeIoResult(Operation::LedLevelRow,
+	                    monome_led_level_row(monome_, x, y, count, data));
 }
 
-int Monome::ledLevelCol(unsigned int x, unsigned int yOff, std::size_t count,
-                        const std::uint8_t* data) {
-	return monome_led_level_col(handle(), x, yOff, count, data);
+IoResult Monome::ledLevelCol(unsigned int x, unsigned int y, std::size_t count,
+							 const std::uint8_t* data) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedLevelColumn);
+	if( count > 0 && !data )
+		return {IoStatus::DeviceError, Operation::LedLevelColumn, EINVAL};
+	return makeIoResult(Operation::LedLevelColumn,
+	                    monome_led_level_col(monome_, x, y, count, data));
 }
 
-int Monome::ledRingSet(unsigned int ring, unsigned int led,
-                       unsigned int level) {
-	return monome_led_ring_set(handle(), ring, led, level);
+IoResult Monome::ledRingSet(unsigned int ring, unsigned int led,
+							unsigned int level) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedRingSet);
+	return makeIoResult(Operation::LedRingSet,
+	                    monome_led_ring_set(monome_, ring, led, level));
 }
 
-int Monome::ledRingAll(unsigned int ring, unsigned int level) {
-	return monome_led_ring_all(handle(), ring, level);
+IoResult Monome::ledRingAll(unsigned int ring, unsigned int level) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedRingAll);
+	return makeIoResult(Operation::LedRingAll,
+	                    monome_led_ring_all(monome_, ring, level));
 }
 
-int Monome::ledRingMap(unsigned int ring,
-                       const std::array<std::uint8_t, 64>& levels) {
+IoResult Monome::ledRingMap(
+		unsigned int ring,
+		const std::array<std::uint8_t, 64>& levels) noexcept {
 	return ledRingMap(ring, levels.data());
 }
 
-int Monome::ledRingMap(unsigned int ring, const std::uint8_t* levels) {
-	return monome_led_ring_map(handle(), ring, levels);
+IoResult Monome::ledRingMap(unsigned int ring,
+							const std::uint8_t* levels) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedRingMap);
+	if( !levels )
+		return {IoStatus::DeviceError, Operation::LedRingMap, EINVAL};
+	return makeIoResult(Operation::LedRingMap,
+	                    monome_led_ring_map(monome_, ring, levels));
 }
 
-int Monome::ledRingRange(unsigned int ring, unsigned int start,
-                         unsigned int end, unsigned int level) {
-	return monome_led_ring_range(handle(), ring, start, end, level);
+IoResult Monome::ledRingRange(unsigned int ring, unsigned int start,
+							  unsigned int end, unsigned int level) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedRingRange);
+	return makeIoResult(Operation::LedRingRange,
+	                    monome_led_ring_range(monome_, ring, start, end, level));
 }
 
-int Monome::ledRingIntensity(unsigned int brightness) {
-	return monome_led_ring_intensity(handle(), brightness);
+IoResult Monome::ledRingIntensity(unsigned int brightness) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::LedRingIntensity);
+	return makeIoResult(Operation::LedRingIntensity,
+	                    monome_led_ring_intensity(monome_, brightness));
 }
 
-int Monome::tiltEnable(unsigned int sensor) {
-	return monome_tilt_enable(handle(), sensor);
+IoResult Monome::tiltEnable(unsigned int sensor) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::TiltEnable);
+	return makeIoResult(Operation::TiltEnable, monome_tilt_enable(monome_, sensor));
 }
 
-int Monome::tiltDisable(unsigned int sensor) {
-	return monome_tilt_disable(handle(), sensor);
+IoResult Monome::tiltDisable(unsigned int sensor) noexcept {
+	if( !monome_ )
+		return closedIoResult(Operation::TiltDisable);
+	return makeIoResult(Operation::TiltDisable, monome_tilt_disable(monome_, sensor));
 }
 
-int Monome::eventNext(Event& out) {
+PollResult Monome::eventNext(Event& out) noexcept {
+	if( !monome_ )
+		return {PollStatus::DeviceError, EBADF};
+
 	monome_event_t event{};
-	const int status = monome_event_next(handle(), &event);
-	if( status > 0 )
+	const int nativeStatus = monome_event_next(monome_, &event);
+	if( nativeStatus > 0 ) {
 		out = Event(event);
-
-	return status;
+		return {PollStatus::Event, nativeStatus};
+	}
+	if( nativeStatus == 0 )
+		return {PollStatus::NoData, nativeStatus};
+	return {PollStatus::DeviceError, nativeStatus};
 }
 
-int Monome::eventHandleNext() {
-	monome_event_t event{};
-	const int status = monome_event_next(handle(), &event);
-	if( status <= 0 )
-		return status;
+PollResult Monome::eventHandleNext() noexcept {
+	Event event;
+	const auto result = eventNext(event);
+	if( result.status != PollStatus::Event )
+		return result;
 
 	std::size_t index = 0;
-	if( !callbackState_ || !eventIndex(event.event_type, index) ||
+	if( !callbackState_ || !eventIndex(toC(event.type()), index) ||
 	    !callbackState_->callbacks[index] )
-		return 0;
+		return result;
 
-	Event wrapped(event);
-	callbackState_->callbacks[index](wrapped);
-	return 1;
+	try {
+		callbackState_->callbacks[index](event);
+	} catch( ... ) {
+		callbackState_->failureCount.fetch_add(1, std::memory_order_relaxed);
+	}
+	return result;
 }
 
 void Monome::eventLoop() {
-	monome_event_loop(handle());
+	monome_event_loop(handle(Operation::EventLoop));
 }
 
 void Monome::on(EventType type, Callback callback) {
-	auto* monome = handle();
-	const auto index = eventIndex(type);
+	auto* monome = handle(Operation::ConfigureCallback);
+	const auto index = eventIndex(type, Operation::ConfigureCallback);
 	const auto cType = toC(type);
 	const int status = callback
 		? monome_register_handler(monome, cType, &Monome::handleEvent,
@@ -263,21 +422,27 @@ void Monome::on(EventType type, Callback callback) {
 		: monome_unregister_handler(monome, cType);
 
 	if( status )
-		throw std::runtime_error("failed to update monome event handler");
+		throw Error(Operation::ConfigureCallback, status);
 
 	// Commit only after the C registration operation succeeds. std::function's
 	// move assignment is noexcept, so C and C++ callback state cannot diverge.
 	callbackState_->callbacks[index] = std::move(callback);
 }
 
-monome_t* Monome::handle() const {
+std::uint64_t Monome::callbackFailureCount() const noexcept {
+	return callbackState_
+		? callbackState_->failureCount.load(std::memory_order_relaxed)
+		: 0;
+}
+
+monome_t* Monome::handle(Operation operation) const {
 	if( !monome_ )
-		throw std::runtime_error("monome handle is not open");
+		throw Error(operation, EBADF, "monome handle is not open");
 
 	return monome_;
 }
 
-void Monome::close() {
+void Monome::close() noexcept {
 	if( !monome_ )
 		return;
 
@@ -304,7 +469,10 @@ void Monome::handleEvent(const monome_event_t* event, void* data) noexcept {
 		Event wrapped(*event);
 		state.callbacks[index](wrapped);
 	} catch( ... ) {
-		std::terminate();
+		if( data ) {
+			auto& state = *static_cast<CallbackState*>(data);
+			state.failureCount.fetch_add(1, std::memory_order_relaxed);
+		}
 	}
 }
 

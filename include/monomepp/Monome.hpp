@@ -25,11 +25,87 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 #include <monome.h>
 
 namespace monomepp {
+
+enum class Operation {
+	None,
+	Open,
+	ReadSerial,
+	ReadDevicePath,
+	ReadFriendlyName,
+	ReadProtocol,
+	ReadRows,
+	ReadColumns,
+	SetRotation,
+	ReadRotation,
+	LedSet,
+	LedAll,
+	LedMap,
+	LedColumn,
+	LedRow,
+	LedIntensity,
+	LedLevelSet,
+	LedLevelAll,
+	LedLevelMap,
+	LedLevelRow,
+	LedLevelColumn,
+	LedRingSet,
+	LedRingAll,
+	LedRingMap,
+	LedRingRange,
+	LedRingIntensity,
+	TiltEnable,
+	TiltDisable,
+	PollEvent,
+	EventLoop,
+	ConfigureCallback
+};
+
+const char* operationName(Operation operation) noexcept;
+
+class Error : public std::runtime_error {
+public:
+	Error(Operation operation, int nativeStatus, std::string details = {});
+
+	Operation operation() const noexcept;
+	int nativeStatus() const noexcept;
+
+private:
+	Operation operation_ = Operation::None;
+	int nativeStatus_ = 0;
+};
+
+enum class PollStatus {
+	Event,
+	NoData,
+	DeviceError
+};
+
+// eventNext() changes its Event output only when status is Event. nativeStatus
+// is the unmodified libmonome return value: positive for an event, zero for no
+// data, and negative for a device error.
+struct PollResult {
+	PollStatus status = PollStatus::NoData;
+	int nativeStatus = 0;
+};
+
+enum class IoStatus {
+	Success,
+	DeviceError
+};
+
+// libmonome output functions use both zero and positive byte counts for success.
+// IoStatus normalizes that convention while nativeStatus remains inspectable.
+struct IoResult {
+	IoStatus status = IoStatus::Success;
+	Operation operation = Operation::None;
+	int nativeStatus = 0;
+};
 
 class Monome {
 public:
@@ -37,7 +113,7 @@ public:
 
 	explicit Monome(const std::string& device);
 	Monome(const std::string& device, const std::string& listenPort);
-	~Monome();
+	~Monome() noexcept;
 
 	Monome(const Monome&) = delete;
 	Monome& operator=(const Monome&) = delete;
@@ -62,45 +138,49 @@ public:
 	void setRotation(Rotation rotation);
 	Rotation rotation() const;
 
-	int ledSet(unsigned int x, unsigned int y, bool on);
-	int ledOn(unsigned int x, unsigned int y);
-	int ledOff(unsigned int x, unsigned int y);
-	int ledAll(bool on);
-	int ledMap(unsigned int xOff, unsigned int yOff,
-	           const std::array<std::uint8_t, 8>& data);
-	int ledMap(unsigned int xOff, unsigned int yOff,
-	           const std::uint8_t* data);
-	int ledCol(unsigned int x, unsigned int yOff, std::size_t count,
-	           const std::uint8_t* colData);
-	int ledRow(unsigned int xOff, unsigned int y, std::size_t count,
-	           const std::uint8_t* rowData);
-	int ledIntensity(unsigned int brightness);
+	IoResult ledSet(unsigned int x, unsigned int y, bool on) noexcept;
+	IoResult ledOn(unsigned int x, unsigned int y) noexcept;
+	IoResult ledOff(unsigned int x, unsigned int y) noexcept;
+	IoResult ledAll(bool on) noexcept;
+	IoResult ledMap(unsigned int x, unsigned int y,
+	                const std::array<std::uint8_t, 8>& data) noexcept;
+	IoResult ledMap(unsigned int x, unsigned int y,
+	                const std::uint8_t* data) noexcept;
+	IoResult ledCol(unsigned int x, unsigned int y, std::size_t count,
+	                const std::uint8_t* data) noexcept;
+	IoResult ledRow(unsigned int x, unsigned int y, std::size_t count,
+	                const std::uint8_t* data) noexcept;
+	IoResult ledIntensity(unsigned int brightness) noexcept;
 
-	int ledLevelSet(unsigned int x, unsigned int y, unsigned int level);
-	int ledLevelAll(unsigned int level);
-	int ledLevelMap(unsigned int xOff, unsigned int yOff,
-	                const std::array<std::uint8_t, 64>& data);
-	int ledLevelMap(unsigned int xOff, unsigned int yOff,
-	                const std::uint8_t* data);
-	int ledLevelRow(unsigned int xOff, unsigned int y, std::size_t count,
-	                const std::uint8_t* data);
-	int ledLevelCol(unsigned int x, unsigned int yOff, std::size_t count,
-	                const std::uint8_t* data);
+	IoResult ledLevelSet(unsigned int x, unsigned int y,
+	                     unsigned int level) noexcept;
+	IoResult ledLevelAll(unsigned int level) noexcept;
+	IoResult ledLevelMap(unsigned int x, unsigned int y,
+	                     const std::array<std::uint8_t, 64>& data) noexcept;
+	IoResult ledLevelMap(unsigned int x, unsigned int y,
+	                     const std::uint8_t* data) noexcept;
+	IoResult ledLevelRow(unsigned int x, unsigned int y, std::size_t count,
+	                     const std::uint8_t* data) noexcept;
+	IoResult ledLevelCol(unsigned int x, unsigned int y, std::size_t count,
+	                     const std::uint8_t* data) noexcept;
 
-	int ledRingSet(unsigned int ring, unsigned int led, unsigned int level);
-	int ledRingAll(unsigned int ring, unsigned int level);
-	int ledRingMap(unsigned int ring,
-	               const std::array<std::uint8_t, 64>& levels);
-	int ledRingMap(unsigned int ring, const std::uint8_t* levels);
-	int ledRingRange(unsigned int ring, unsigned int start, unsigned int end,
-	                 unsigned int level);
-	int ledRingIntensity(unsigned int brightness);
+	IoResult ledRingSet(unsigned int ring, unsigned int led,
+	                    unsigned int level) noexcept;
+	IoResult ledRingAll(unsigned int ring, unsigned int level) noexcept;
+	IoResult ledRingMap(unsigned int ring,
+	                    const std::array<std::uint8_t, 64>& levels) noexcept;
+	IoResult ledRingMap(unsigned int ring, const std::uint8_t* levels) noexcept;
+	IoResult ledRingRange(unsigned int ring, unsigned int start,
+	                      unsigned int end, unsigned int level) noexcept;
+	IoResult ledRingIntensity(unsigned int brightness) noexcept;
 
-	int tiltEnable(unsigned int sensor);
-	int tiltDisable(unsigned int sensor);
+	IoResult tiltEnable(unsigned int sensor) noexcept;
+	IoResult tiltDisable(unsigned int sensor) noexcept;
 
-	int eventNext(Event& out);
-	int eventHandleNext();
+	// Polling is nonthrowing so device workers can treat absence and I/O loss as
+	// status. A closed or moved-from Monome reports DeviceError with EBADF.
+	PollResult eventNext(Event& out) noexcept;
+	PollResult eventHandleNext() noexcept;
 	void eventLoop();
 
 	/*
@@ -110,13 +190,16 @@ public:
 	 * eventLoop() or monome_event_loop(raw()).
 	 */
 	void on(EventType type, Callback callback);
+	// Exceptions thrown by user callbacks are caught at both callback dispatch
+	// boundaries and counted. The count follows ownership across moves.
+	std::uint64_t callbackFailureCount() const noexcept;
 
 private:
 	static constexpr std::size_t EventCount = MONOME_EVENT_MAX;
 	struct CallbackState;
 
-	monome_t* handle() const;
-	void close();
+	monome_t* handle(Operation operation) const;
+	void close() noexcept;
 	void unregisterCallbacks() noexcept;
 
 	static void handleEvent(const monome_event_t* event, void* data) noexcept;
