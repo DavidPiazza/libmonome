@@ -15,12 +15,14 @@
  */
 
 #include <poll.h>
+#include <errno.h>
 
 #include <monome.h>
 #include "platform.h"
 
 int monome_platform_wait_for_input(monome_t *monome, uint_t msec) {
 	struct pollfd fds[1];
+	int result;
 
 	if( !msec )
 		return 0;
@@ -28,7 +30,13 @@ int monome_platform_wait_for_input(monome_t *monome, uint_t msec) {
 	fds->fd = monome_get_fd(monome);
 	fds->events = POLLIN;
 
-	if( !poll(fds, 1, msec) )
+	do {
+		result = poll(fds, 1, msec);
+	} while( result < 0 && errno == EINTR );
+
+	if( result < 0 )
+		return -1;
+	if( result == 0 )
 		return 1;
 
 	if (fds->revents & POLLERR)

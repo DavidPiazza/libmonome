@@ -407,3 +407,7 @@ void m_free(void *ptr) {
 void m_sleep(uint_t msec) {
 	Sleep(msec);
 }
+
+uint64_t monome_platform_monotonic_milliseconds(void) {
+	return (uint64_t) GetTickCount64();
+}

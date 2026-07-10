@@ -16,6 +16,8 @@
 
 #include "internal.h"
 
+#include <stdint.h>
+
 char *monome_platform_get_dev_serial(const char *device);
 
 monome_t *monome_platform_load_protocol(const char *proto);
@@ -29,6 +31,7 @@ ssize_t monome_platform_write(monome_t *monome, const uint8_t *buf, size_t nbyte
 ssize_t monome_platform_read(monome_t *monome, uint8_t *buf, size_t nbyte);
 
 int monome_platform_wait_for_input(monome_t *monome, uint_t msec);
+uint64_t monome_platform_monotonic_milliseconds(void);
 
 void *m_malloc(size_t size);
 void *m_calloc(size_t nmemb, size_t size);

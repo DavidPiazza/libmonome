@@ -17,6 +17,7 @@
 #define _GNU_SOURCE
 
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/select.h>
@@ -48,6 +49,7 @@ int monome_platform_wait_for_input(monome_t *monome, uint_t msec) {
 	fd_set rfds[1];
 	fd_set efds[1];
 	int fd;
+	int result;
 
 	fd = monome_get_fd(monome);
 
@@ -59,7 +61,13 @@ int monome_platform_wait_for_input(monome_t *monome, uint_t msec) {
 	FD_ZERO(efds);
 	FD_SET(fd, efds);
 
-	if( !select(fd + 1, rfds, NULL, efds, timeout) )
+	do {
+		result = select(fd + 1, rfds, NULL, efds, timeout);
+	} while( result < 0 && errno == EINTR );
+
+	if( result < 0 )
+		return -1;
+	if( result == 0 )
 		return 1;
 
 	if( FD_ISSET(fd, efds) )

@@ -25,6 +25,7 @@
 #include <dlfcn.h>
 #include <sys/select.h>
 #include <termios.h>
+#include <time.h>
 #include <errno.h>
 
 #include <monome.h>
@@ -104,16 +105,18 @@ int monome_platform_open(monome_t *monome, const monome_devmap_t *m,
 		return 1;
 	}
 
-	tcgetattr(fd, &ot);
+	if( tcgetattr(fd, &ot) < 0 )
+		goto err_termios;
 	nt = ot;
 
 	/* baud rate */
 	if( m->quirks & QUIRK_57600_BAUD ) {
-		cfsetispeed(&nt, B57600);
-		cfsetospeed(&nt, B57600);
+		if( cfsetispeed(&nt, B57600) < 0 || cfsetospeed(&nt, B57600) < 0 )
+			goto err_termios;
 	} else {
-		cfsetispeed(&nt, MONOME_BAUD_RATE);
-		cfsetospeed(&nt, MONOME_BAUD_RATE);
+		if( cfsetispeed(&nt, MONOME_BAUD_RATE) < 0 ||
+		    cfsetospeed(&nt, MONOME_BAUD_RATE) < 0 )
+			goto err_termios;
 	}
 
 	/* parity (8N1) */
@@ -137,14 +140,20 @@ int monome_platform_open(monome_t *monome, const monome_devmap_t *m,
 	if( tcsetattr(fd, TCSANOW, &nt) < 0 )
 		goto err_tcsetattr;
 
-	tcflush(fd, TCIOFLUSH);
+	if( tcflush(fd, TCIOFLUSH) < 0 )
+		goto err_termios;
 
 	monome->fd = fd;
 	return 0;
 
 err_tcsetattr:
 	perror("libmonome: could not set terminal attributes");
+	goto err_close;
 
+err_termios:
+	perror("libmonome: could not configure terminal");
+
+err_close:
 	close(fd);
 	return 1;
 }
@@ -187,6 +196,8 @@ start:
 
 			return bytes;
 		}
+		if( bytes == 0 )
+			return ret;
 
 		ret += bytes;
 		buf += bytes;
@@ -241,4 +252,12 @@ void m_free(void *ptr) {
 
 void m_sleep(uint_t msec) {
 	usleep(msec * 1000);
+}
+
+uint64_t monome_platform_monotonic_milliseconds(void) {
+	struct timespec now;
+	if( clock_gettime(CLOCK_MONOTONIC, &now) < 0 )
+		return 0;
+	return ((uint64_t) now.tv_sec * 1000) +
+	       ((uint64_t) now.tv_nsec / 1000000);
 }

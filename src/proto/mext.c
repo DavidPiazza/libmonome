@@ -29,6 +29,13 @@
 #define ARRAY_LENGTH(x) (sizeof(x) / sizeof(*x))
 #define SELF_FROM(monome) mext_t *self = MEXT_T(monome)
 
+#ifndef MONOME_MEXT_HANDSHAKE_TIMEOUT_MS
+#define MONOME_MEXT_HANDSHAKE_TIMEOUT_MS 1000
+#endif
+
+#define MEXT_HANDSHAKE_RETRY_MS 250
+#define MEXT_HANDSHAKE_WAIT_SLICE_MS 25
+
 /**
  * protocol internal
  */
@@ -71,6 +78,20 @@ static ssize_t mext_simple_cmd(monome_t *monome, mext_cmd_t cmd) {
 	};
 
 	return mext_write_msg(monome, &msg);
+}
+
+static int mext_query_pending(monome_t *monome, mext_t *self) {
+	if( (self->need_responses & MEXT_NEED_QUERY) &&
+	    mext_simple_cmd(monome, CMD_SYSTEM_QUERY) != 1 )
+		return -1;
+	if( (self->need_responses & MEXT_NEED_ID) &&
+	    mext_simple_cmd(monome, CMD_SYSTEM_GET_ID) != 1 )
+		return -1;
+	if( (self->need_responses & MEXT_NEED_GRID_SIZE) &&
+	    mext_simple_cmd(monome, CMD_SYSTEM_GET_GRIDSZ) != 1 )
+		return -1;
+
+	return 0;
 }
 
 static ssize_t mext_led_row_col(monome_t *monome, mext_cmd_t cmd, uint_t x,
@@ -588,32 +609,53 @@ static int mext_open(monome_t *monome, const char *dev, const char *serial,
                      const monome_devmap_t *m, va_list args) {
 	SELF_FROM(monome);
 	monome_event_t e;
+	uint64_t start, now, deadline, retry_at;
+	int retried = 0;
+	int wait_status;
+	uint_t wait_ms;
+	(void) args;
 
 	if( monome_platform_open(monome, m, dev) )
 		return -1;
 
 	monome->serial = serial;
 	monome->friendly = m->friendly;
+	start = monome_platform_monotonic_milliseconds();
+	deadline = start + MONOME_MEXT_HANDSHAKE_TIMEOUT_MS;
+	retry_at = start + MEXT_HANDSHAKE_RETRY_MS;
 
-#define QUERY_IF_NEEDED(resp, cmd)											\
-	do {																	\
-		if( self->need_responses & resp )									\
-			mext_simple_cmd(monome, cmd);									\
-	} while( 0 )
+	if( mext_query_pending(monome, self) < 0 )
+		goto err_close;
 
-	do {
-		QUERY_IF_NEEDED(MEXT_NEED_QUERY, CMD_SYSTEM_QUERY);
-		QUERY_IF_NEEDED(MEXT_NEED_ID, CMD_SYSTEM_GET_ID);
-		QUERY_IF_NEEDED(MEXT_NEED_GRID_SIZE, CMD_SYSTEM_GET_GRIDSZ);
+	while( self->need_responses ) {
+		now = monome_platform_monotonic_milliseconds();
+		if( now >= deadline )
+			goto err_close;
 
-		if (monome_platform_wait_for_input(monome, 250) < 0
-				|| mext_next_event(monome, &e) < 0)
-			return -1;
-	} while( self->need_responses );
+		if( !retried && now >= retry_at ) {
+			if( mext_query_pending(monome, self) < 0 )
+				goto err_close;
+			retried = 1;
+		}
 
-#undef QUERY_IF_NEEDED
+		wait_ms = MEXT_HANDSHAKE_WAIT_SLICE_MS;
+		if( deadline - now < wait_ms )
+			wait_ms = (uint_t) (deadline - now);
+		if( !retried && retry_at > now && retry_at - now < wait_ms )
+			wait_ms = (uint_t) (retry_at - now);
+
+		wait_status = monome_platform_wait_for_input(monome, wait_ms);
+		if( wait_status < 0 )
+			goto err_close;
+		if( wait_status == 0 && mext_next_event(monome, &e) < 0 )
+			goto err_close;
+	}
 
 	return 0;
+
+err_close:
+	monome_platform_close(monome);
+	return -1;
 }
 
 static int mext_close(monome_t *monome) {

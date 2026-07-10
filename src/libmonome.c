@@ -83,8 +83,10 @@ monome_t *monome_open(const char *dev, ...) {
 
 		if( (m = map_serial_to_device(serial)) )
 			proto = m->proto;
-		else
+		else {
+			m_free(serial);
 			return NULL;
+		}
 	} else
 		/* otherwise, we'll assume that what we have is an OSC URL.
 
@@ -100,7 +102,7 @@ monome_t *monome_open(const char *dev, ...) {
 	va_end(arguments);
 
 	if( error )
-		goto err_init;
+		goto err_protocol;
 
 	monome->proto = proto;
 
@@ -111,7 +113,10 @@ monome_t *monome_open(const char *dev, ...) {
 	return monome;
 
 err_nomem:
-	monome->free(monome);
+	monome->close(monome);
+
+err_protocol:
+	monome_platform_free(monome);
 
 err_init:
 	if( serial ) m_free(serial);

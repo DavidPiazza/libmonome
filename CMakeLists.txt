@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.27)
 
 project(libmonome VERSION 1.4.10 LANGUAGES C)
 
+include(CTest)
+
 set(CMAKE_C_STANDARD 17)
 
 option(BUILD_EXAMPLES "build libmonome c examples")
@@ -93,6 +95,30 @@ endif()
 if(BUILD_CPP_EXAMPLES)
     add_executable(simple_toggle examples/cpp/simple_toggle.cpp)
     target_link_libraries(simple_toggle PRIVATE monomepp)
+endif()
+
+if(BUILD_TESTING)
+    add_library(monome_fake STATIC
+        src/libmonome.c
+        src/monobright.c
+        src/rotation.c
+        src/proto/40h.c
+        src/proto/mext.c
+        src/proto/series.c
+        src/platform/embed.c
+        tests/fake_platform.c)
+    target_compile_definitions(monome_fake PRIVATE EMBED_PROTOS)
+    target_include_directories(monome_fake
+        PRIVATE
+            src/private
+            tests
+        PUBLIC
+            public)
+
+    add_executable(monome_acquisition_tests tests/monome_acquisition_tests.c)
+    target_include_directories(monome_acquisition_tests PRIVATE tests)
+    target_link_libraries(monome_acquisition_tests PRIVATE monome_fake)
+    add_test(NAME monome_acquisition_tests COMMAND monome_acquisition_tests)
 endif()
 
 if(BUILD_PYTHON_EXTENSION)
